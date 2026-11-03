@@ -1,0 +1,10 @@
+{
+  "name": "call-pool-pto",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Call Pool PTO: Excel add-in for the provider Call Pool workbook",
+  "scripts": {
+    "check": "node --check core.js && node --check excel.js && node --check app.js",
+    "test": "node --test tests/*.test.js"
+  }
+}
