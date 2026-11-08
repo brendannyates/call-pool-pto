@@ -12,13 +12,16 @@ const XL = (() => {
   const colIdx = l => l.split("").reduce((n, c) => n * 26 + c.charCodeAt(0) - 64, 0) - 1;
   const local = a => String(a || "").replace(/^.*!/, "").replace(/\$/g, "");
 
-  async function readModel() {
+  /* onStep(i, info): the loading screen ticks a step as each read finishes */
+  async function readModel(onStep) {
+    const tick = (i, o) => { if (onStep) try { onStep(i, o || {}); } catch (e) { /* screen only */ } };
     return Excel.run(async ctx => {
       const wb = ctx.workbook, wss = wb.worksheets;
       const pto = wss.getItemOrNullObject(PTO), dash = wss.getItemOrNullObject(DASH);
       const tA = wb.tables.getItemOrNullObject("Tbl_Yr_Assignments");
       const tW = wb.tables.getItemOrNullObject("Wk_Start_Date"), tR = wb.tables.getItemOrNullObject("Cov_Wk_Range");
       await ctx.sync();
+      tick(0);
       if (pto.isNullObject) throw new UserError("This workbook has no “PTO” sheet. Open the Call Pool workbook and try again.");
       const colA = pto.getRange("A1:A" + MAXROW).load("values");
       const used = pto.getUsedRange(true).load("columnIndex,columnCount");
@@ -32,6 +35,7 @@ const XL = (() => {
       await ctx.sync();
 
       const sections = CP.parseSections(colA.values.map(r => r[0]));
+      tick(1, { sections });
       if (!sections.length) throw new UserError("Couldn't find the “Call Pool 1”, “Call Pool 2” … sections in column A of the PTO sheet.");
       const lastCol = used.columnIndex + used.columnCount - 1, dateRow = sections[0].dateRow;
       const dates = pto.getRangeByIndexes(dateRow - 1, 0, 1, lastCol + 1).load("values");
@@ -43,6 +47,7 @@ const XL = (() => {
       dates.values[0].forEach((v, i) => { if (i >= 3 && typeof v === "number" && v > 30000) { if (!dateCol.has(v)) dateCol.set(v, i); minDate = Math.min(minDate, v); maxDate = Math.max(maxDate, v); } });
       const weeks = [];
       if (wv && rv) wv.values.forEach((r, i) => { const mon = r[0], label = String((rv.values[i] || [])[0] || "").trim(); if (typeof mon === "number" && label) weeks.push({ label, mon }); });
+      tick(2, { weeks });
       const assign = {};
       if (av) av.values.slice(1).forEach(r => { const k = String(r[0] || "").trim(); if (k) assign[k] = r.slice(1, 9).map(x => CP.xtrim(x)); });
       const d = dr ? {

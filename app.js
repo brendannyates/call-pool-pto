@@ -4,8 +4,79 @@
   "use strict";
   const $ = (s, el = document) => el.querySelector(s);
   const esc = s => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-  const S = { view: "week", model: null, weekIdx: -1, weekRows: null, form: { row: "", type: "pto", from: "", to: "", weekdays: true }, preview: null, runs: null, pw: null, busy: false, error: "" };
+  const S = { view: "week", model: null, weekIdx: -1, weekRows: null, form: { row: "", type: "pto", from: "", to: "", weekdays: true }, preview: null, runs: null, pw: null, busy: false, error: "",
+    boot: null, users: [], name: "", picking: false, wb: "" };
   window.APP = S;
+
+  /* ---- who's using the pane ----
+     The people list is kept in the workbook's add-in settings (cpUsers), so no sheet is added. This computer remembers, per workbook,
+     who picked today and who has used it here before (localStorage "cpWho:<workbook key>"). The first open each day asks for a name. */
+  const USERS = "cpUsers";
+  const settings = () => { try { return Office.context.document.settings; } catch (e) { return null; } };
+  const getDoc = k => { const st = settings(); try { return st ? st.get(k) : null; } catch (e) { return null; } };
+  const setDoc = (k, v) => new Promise((res, rej) => { const st = settings(); if (!st) return res(); try { st.set(k, v); st.saveAsync(r => r && r.status === "failed" ? rej(new Error((r.error && r.error.message) || "Couldn't save the add-in settings.")) : res()); } catch (e) { rej(e); } });
+  const ls = { get: k => { try { return localStorage.getItem(k) || ""; } catch (e) { return ""; } }, set: (k, v) => { try { localStorage.setItem(k, v); } catch (e) { /* this session only */ } } };
+  const dayIso = () => CP.serialToISO(todaySerial());
+  function workbookKey() {
+    let url = ""; try { url = Office.context.document.url || ""; } catch (e) { /* no document */ }
+    if (url) return CP.wbKeyOf(url);
+    let id = getDoc("cpWbId");
+    if (!id) { id = `id${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`; setDoc("cpWbId", id).catch(() => { /* read-only: this session only */ }); }
+    return CP.wbKeyOf(id);
+  }
+  const whoKey = () => S.wb ? `cpWho:${S.wb}` : "";
+  const whoRead = () => CP.whoRec(whoKey() ? ls.get(whoKey()) : "");
+  /* today's pick on this computer, if they're still on the workbook's list */
+  function loadWho() {
+    S.wb = S.wb || workbookKey(); S.users = CP.userList(getDoc(USERS));
+    const n = CP.whoToday(whoRead(), dayIso()), u = n && S.users.find(x => CP.userKey(x.name) === CP.userKey(n));
+    S.name = u ? u.name : "";
+  }
+  function setWho(name) {
+    S.name = name || ""; S.picking = false;
+    if (whoKey()) ls.set(whoKey(), JSON.stringify(CP.whoPick(whoRead(), S.name, dayIso())));
+  }
+  /* "Enter your name": this workbook's list only, people who've used this computer here first, nobody picked */
+  function pickHTML() {
+    const L = CP.pickOrder(S.users, whoRead().used), cancel = S.picking && S.name;
+    return `<div class="boot who"><div class="bootin"><div class="whohero"><h1>Enter your name</h1>
+      <p class="muted">${L.length ? "Pick yours below, or add it if you’re new." : "Nobody has added their name to this workbook yet. Add yours to start."}</p></div>
+      ${L.length ? `<div class="wholist" role="group" aria-label="People on this workbook">${L.map(u => `<button class="btn ghost whob" data-a="pickUser" data-v="${esc(u.name)}">${esc(u.name)}${u.here ? `<span class="tag">On this computer</span>` : ""}</button>`).join("")}</div>` : ""}
+      <details class="fold whonew"${L.length ? "" : " open"}><summary>${L.length ? "I’m not on the list" : "Add your name"}</summary>
+        <label class="f" for="whoNew">Your name</label><input type="text" id="whoNew" autocomplete="off" spellcheck="false" maxlength="30"><span class="hint">Usually your first name. Add a last initial if someone here shares it.</span>
+        <div class="act"><button class="btn primary" data-a="addUser">Add me and start</button></div></details>
+      ${cancel ? `<div class="act"><button class="btn quiet" data-a="pickCancel">Stay as ${esc(S.name)}</button></div>` : ""}</div></div>`;
+  }
+  async function addUser() {
+    const n = CP.cleanName(($("#whoNew") || {}).value); if (!n) { toast("Type your name first."); return; }
+    const had = S.users.find(u => CP.userKey(u.name) === CP.userKey(n));
+    if (!had) {
+      const next = CP.addUser(getDoc(USERS), n, dayIso());
+      try { await setDoc(USERS, next); } catch (e) { toast("Couldn't add you to this workbook: " + (e.message || e)); return; }
+      S.users = CP.userList(next);
+    }
+    pickUser(had ? had.name : n);
+  }
+  function pickUser(n) { if (!n) return; setWho(n); render(); toast(`Hi ${n}.`); }
+  async function removeUser(n) {
+    const next = CP.removeUser(getDoc(USERS), n);
+    try { await setDoc(USERS, next); } catch (e) { toast("Couldn't remove " + n + ": " + (e.message || e)); return; }
+    S.users = CP.userList(next); if (CP.userKey(n) === CP.userKey(S.name)) S.name = "";
+    render(); toast(`Removed ${n} from this workbook's list.`);
+  }
+
+  /* ---- the loading screen on open: each step ticks as its read finishes ---- */
+  const BOOT = ["Connecting to the workbook", "Reading the PTO tab and Dashboard", "Reading the coverage weeks", "Reading this week"];
+  function bootStep(i, o) {
+    const B = S.boot || (S.boot = { i: 0, m: [] });
+    B.m[i] = i === 0 ? "Connected" : i === 1 ? `${o.sections.length} call pool${o.sections.length === 1 ? "" : "s"}, ${CP.providers(o.sections).length} providers` : i === 2 ? `${o.weeks.length} coverage week${o.weeks.length === 1 ? "" : "s"}` : o.text || "";
+    B.i = i + 1; if (!S.model) render();
+  }
+  function bootHTML() {
+    const B = S.boot || { i: 0, m: [] };
+    return `<div class="boot" role="status" aria-live="polite"><div class="bootin"><div class="spinner" aria-hidden="true"></div><h1>Call Pool PTO</h1><p class="muted">Reading the workbook.</p>
+      <ol class="steps">${BOOT.map((t, i) => `<li class="step ${B.i > i ? "done" : B.i === i ? "now" : "next"}"><span class="k">${B.i > i ? "✓" : ""}</span><span><span class="t">${t}</span><span class="m">${esc(B.m[i] || "")}</span></span></li>`).join("")}</ol></div></div>`;
+  }
 
   /* ---- helpers ---- */
   let toastT;
@@ -58,15 +129,20 @@
   /* ---- data ---- */
   async function load(keepWeek) {
     S.error = "";
+    const first = !S.model;
+    if (first) { S.boot = { i: 0, m: [] }; render(); }
     try {
-      S.model = await XL.readModel();
-      const m = S.model;
+      const m = await XL.readModel(first ? bootStep : null);
       if (!keepWeek || S.weekIdx < 0) {
         let i = m.dash ? m.weeks.findIndex(w => w.label === m.dash.week) : -1;
         if (i < 0) { const w = CP.weekForSerial(m.weeks, todaySerial()); i = w ? m.weeks.indexOf(w) : 0; }
         S.weekIdx = i;
       }
-      await loadWeek();
+      const w = m.weeks[S.weekIdx];
+      S.weekRows = w ? await XL.readWeek(m, satOf(w)) : null;
+      if (first) bootStep(3, { text: w ? w.label : "No coverage week" });
+      S.model = m;
+      loadWho();
     } catch (e) { S.error = e.message || String(e); }
     render();
   }
@@ -93,14 +169,17 @@
   function render() {
     const app = $("#app");
     if (S.error && !S.model) { app.innerHTML = `${frame()}<main><div class="msg bad">${esc(S.error)}</div><div class="act" style="margin-top:12px"><button class="btn" data-a="reload">Try again</button></div></main>`; return; }
-    if (!S.model) { app.innerHTML = `<div class="landing"><h2>Call Pool PTO</h2><p class="muted">Loading…</p></div>`; return; }
+    if (!S.model) { app.innerHTML = bootHTML(); return; }
+    if (!S.name || S.picking) { app.innerHTML = pickHTML(); const f = $("#whoNew"); if (f && !S.users.length) f.focus(); return; }
     const body = S.view === "log" ? viewLog() : S.view === "setup" ? viewSetup() : viewWeek();
     app.innerHTML = frame() + `<main class="stack">${S.error ? `<div class="msg bad">${esc(S.error)}</div>` : ""}${body}</main>`;
     if (S.view === "log") bindLog();
   }
   function frame() {
     const tab = (v, t) => `<button data-view="${v}" ${S.view === v ? 'aria-current="page"' : ""}>${t}</button>`;
-    return `<header class="top"><div class="brand">Call Pool PTO <small>${S.model && S.model.dash && S.model.dash.week ? "Dashboard week " + esc(S.model.dash.week) : ""}</small></div><nav class="tabs">${tab("week", "This week")}${tab("log", "Log time off")}${tab("setup", "Setup")}</nav></header>`;
+    /* toolbar, flush right: no refresh, full screen or light/dark here, so it holds only the Dev Update bell (.du-slot) */
+    return `<header class="top"><div class="brand"><span>Call Pool PTO</span><small>${S.model && S.model.dash && S.model.dash.week ? "Dashboard week " + esc(S.model.dash.week) : ""}</small><div class="tools"><span class="du-slot"></span></div></div>
+      ${S.name ? `<div class="whoami"><span>${esc(S.name)}</span><button class="linkb" data-a="switchUser">Switch user</button></div>` : ""}<nav class="tabs">${tab("week", "This week")}${tab("log", "Log time off")}${tab("setup", "Setup")}</nav></header>`;
   }
 
   function viewWeek() {
@@ -234,6 +313,8 @@
       ${fx("Dashboard!D7 (Covering, copy down to D14)", CP.FORMULAS.covering(7))}
       ${fx("Dashboard!C7 (On call, already in the workbook)", '=INDEX(Tbl_Yr_Assignments[], MATCH($B$3, Tbl_Yr_Assignments[Week], 0), MATCH("Call Pool " & $B7, Tbl_Yr_Assignments[#Headers], 0))')}
     </section>
+    <section class="card"><h3>People on this workbook</h3><p class="small muted" style="margin:0">Picked from on the name screen. Kept in the workbook's add-in settings, not on a sheet.</p>
+      ${S.users.length ? `<ul class="runs">${S.users.map(u => `<li><span>${esc(u.name)}${u.added ? ` <span class="muted small">added ${esc(CP.mdy(CP.isoToSerial(u.added)))}</span>` : ""}</span><button class="btn quiet" data-a="rmUser" data-v="${esc(u.name)}">Remove</button></li>`).join("")}</ul>` : `<p class="muted small">Nobody yet.</p>`}</section>
     <section class="card"><h3>How it reads the PTO tab</h3><p class="small" style="margin:0">Weeks run Saturday to Friday, like the rotation. P = PTO, 1/2 Day P = half-day PTO, C = call out, L = leave. Holidays (H) and regular days off (O, OFF) aren't listed. A provider on call who is also out is flagged ⚠.</p>
     <div class="act" style="margin-top:10px;display:flex;gap:8px"><button class="btn" data-a="reload">Reload workbook</button><button class="btn quiet" data-a="gotoPto">Open PTO tab</button></div></section>`;
   }
@@ -244,7 +325,7 @@
     if (m.dash) {
       const typed = m.dash.rows.filter(r => r.covering && !r.formula.startsWith("="));
       if (typed.length) {
-        try { const st = Office.context.document.settings; st.set("cpCoveringBackup", { at: new Date().toISOString(), week: m.dash.week, cells: typed.map(r => ({ cell: "D" + r.row, text: r.covering })) }); await new Promise(res => st.saveAsync(res)); } catch (e) { /* settings unavailable: carry on */ }
+        try { const st = Office.context.document.settings; st.set("cpCoveringBackup", { at: new Date().toISOString(), by: S.name, week: m.dash.week, cells: typed.map(r => ({ cell: "D" + r.row, text: r.covering })) }); await new Promise(res => st.saveAsync(res)); } catch (e) { /* settings unavailable: carry on */ }
       }
     }
     S.busy = true;
@@ -275,11 +356,17 @@
     else if (act === "gotoPto") XL.goTo(XL.PTO, "B1");
     else if (act === "copy") copyText(a.dataset.f);
     else if (act === "clearRun") clearRun(+a.dataset.s, +a.dataset.e);
+    else if (act === "pickUser") pickUser(a.dataset.v);
+    else if (act === "addUser") addUser();
+    else if (act === "switchUser") { S.picking = true; render(); }
+    else if (act === "pickCancel") { S.picking = false; render(); }
+    else if (act === "rmUser") removeUser(a.dataset.v);
   });
+  document.addEventListener("keydown", e => { if (e.key === "Enter" && e.target.id === "whoNew") { e.preventDefault(); addUser(); } });
   document.addEventListener("change", async e => { if (e.target.id === "wk") { S.weekIdx = +e.target.value; await loadWeek(); render(); } });
 
   window.reset = () => { S.view = "week"; S.form = { row: "", type: "pto", from: "", to: "", weekdays: true }; S.preview = null; S.runs = null; S.pw = null; S.remember = false; };
   window.show = v => { S.view = v; render(); };
   window.reload = () => load(false);
-  Office.onReady(() => load(false));
+  Office.onReady(() => { if (window.DevUpdates) DevUpdates.init({ app: "callpool" }); load(false); });
 })();

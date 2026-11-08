@@ -192,7 +192,41 @@
   /* rough row height for wrapped text in the merged Covering cell */
   const rowHeightFor = (text, charsPerLine, min) => Math.max(min, Math.ceil(String(text || "").length / Math.max(10, charsPerLine)) * 16 + 8);
 
+  /* ---- who's using the pane (the same model as the IVK Tracker) ----
+     The people list lives in the workbook's add-in settings (cpUsers: [{ name, added }]), never on a sheet. This computer remembers,
+     per workbook, who picked today and who has used it here before: { day: "2026-11-07", name: "Sam", used: ["Sam", "Ana"] }. */
+  const txt = v => String(v == null ? "" : v).trim();
+  const userKey = n => txt(n).toLowerCase();
+  /* the name typed to join the list: usually a first name, a last initial when two people share one */
+  const cleanName = s => txt(s).replace(/\s+/g, " ").slice(0, 30).trim();
+  function userList(v) {
+    const seen = new Set(), out = [];
+    for (const u of Array.isArray(v) ? v : []) {
+      const name = cleanName(u && typeof u === "object" ? u.name : u), k = userKey(name);
+      if (!name || seen.has(k)) continue; seen.add(k); out.push({ name, added: txt(u && u.added) });
+    }
+    return out;
+  }
+  const addUser = (list, name, addedIso) => { const L = userList(list), n = cleanName(name); return !n || L.some(u => userKey(u.name) === userKey(n)) ? L : L.concat({ name: n, added: addedIso || "" }); };
+  const removeUser = (list, name) => userList(list).filter(u => userKey(u.name) !== userKey(name));
+  /* the picker's order: people who have used this computer on this workbook first (newest first), then everyone else A-Z */
+  function pickOrder(users, here) {
+    const H = (here || []).map(userKey), rank = u => { const i = H.indexOf(userKey(u.name)); return i < 0 ? Infinity : i; };
+    return userList(users).map(u => Object.assign({}, u, { here: rank(u) !== Infinity }))
+      .sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
+  }
+  /* a short key from the workbook's URL (or the id saved in it), so one workbook's pick never carries to another */
+  function wbKeyOf(s) {
+    let h = 0x811c9dc5; const t = String(s || "").trim().toLowerCase().replace(/[?#].*$/, "");
+    for (let i = 0; i < t.length; i++) { h ^= t.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; }
+    return t ? "w" + h.toString(36) : "";
+  }
+  function whoRec(json) { try { const o = JSON.parse(json || "{}"); return { day: txt(o.day), name: txt(o.name), used: Array.isArray(o.used) ? o.used.map(txt).filter(Boolean) : [] }; } catch (e) { return { day: "", name: "", used: [] }; } }
+  const whoToday = (rec, dayIso) => rec && rec.day === dayIso ? rec.name : "";
+  const whoPick = (rec, name, dayIso) => ({ day: dayIso, name, used: [name].concat(((rec && rec.used) || []).filter(n => userKey(n) !== userKey(name))).slice(0, 20) });
+
   const CP = { DAY, DOW, mdy, serialToISO, isoToSerial, dow, isWeekday, md, dayLabel, localSerial, satOfMonday, satOnOrBefore, TYPES, typeOf, isOut, norm, xtrim, lastName, sameLast,
-    isPoolHead, parseSections, providers, runs, weekStatus, coveringText, planWrite, timeOffRuns, onCallWeeks, weekForSerial, FORMULAS, isOurs, rowHeightFor };
+    isPoolHead, parseSections, providers, runs, weekStatus, coveringText, planWrite, timeOffRuns, onCallWeeks, weekForSerial, FORMULAS, isOurs, rowHeightFor,
+    userKey, cleanName, userList, addUser, removeUser, pickOrder, wbKeyOf, whoRec, whoToday, whoPick };
   if (typeof module === "object" && module.exports) module.exports = CP; else root.CP = CP;
 })(typeof window !== "undefined" ? window : globalThis);
