@@ -8,13 +8,34 @@
     boot: null, users: [], name: "", picking: false, wb: "" };
   window.APP = S;
 
+  /* ---- full screen ----
+     An Office dialog floating over the Excel page (shell.js). It never touches the workbook: every read and write is asked of
+     the pane (Shell.call), which runs it with its own copy of the model. A protected sheet's password is typed into full
+     screen's own prompt and goes to the pane with that one write, in memory only (never in the dialog's address or storage). */
+  const FULL = !!(window.Shell && Shell.FULL);
+  const docCache = {};   // full screen: the pane's add-in settings (cpUsers)
+  const ser = m => Object.assign({}, m, { dateCol: [...m.dateCol], minDate: isFinite(m.minDate) ? m.minDate : null, maxDate: isFinite(m.maxDate) ? m.maxDate : null });
+  const revive = m => Object.assign(m, { dateCol: new Map(m.dateCol), minDate: m.minDate == null ? Infinity : m.minDate, maxDate: m.maxDate == null ? -Infinity : m.maxDate });
+  /* the pane's errors come back as plain errors: make the password ones the classes guarded() knows */
+  const again = e => { if (e && e.remote === "NeedPassword") throw new XL.NeedPassword(e.sheets); if (e && e.remote === "BadPassword") throw new XL.BadPassword(); if (e && e.remote === "UserError") throw new XL.UserError(e.message); throw e; };
+  const X = FULL ? Object.assign({}, XL, {
+    readModel: () => Shell.call("readModel").then(revive, again),
+    readWeek: (m, sat) => Shell.call("readWeek", sat).catch(again),
+    readRow: (m, row, from, to) => Shell.call("readRow", row, from, to).catch(again),
+    writeRow: (m, row, from, values, pw) => Shell.call("writeRow", row, from, values, pw).catch(again),
+    install: (m, pw) => Shell.call("install", pw).catch(again),
+    refreshDashboard: pw => Shell.call("refreshDashboard", pw).catch(again),
+    /* the sheet is behind full screen: go there and close full screen */
+    goTo: (sheet, address) => Shell.call("goTo", sheet, address).then(() => Shell.close(), again)
+  }) : XL;
+
   /* ---- who's using the pane ----
      The people list is kept in the workbook's add-in settings (cpUsers), so no sheet is added. This computer remembers, per workbook,
      who picked today and who has used it here before (localStorage "cpWho:<workbook key>"). The first open each day asks for a name. */
   const USERS = "cpUsers";
   const settings = () => { try { return Office.context.document.settings; } catch (e) { return null; } };
-  const getDoc = k => { const st = settings(); try { return st ? st.get(k) : null; } catch (e) { return null; } };
-  const setDoc = (k, v) => new Promise((res, rej) => { const st = settings(); if (!st) return res(); try { st.set(k, v); st.saveAsync(r => r && r.status === "failed" ? rej(new Error((r.error && r.error.message) || "Couldn't save the add-in settings.")) : res()); } catch (e) { rej(e); } });
+  const getDoc = k => { if (FULL) return k in docCache ? docCache[k] : null; const st = settings(); try { return st ? st.get(k) : null; } catch (e) { return null; } };
+  const setDoc = (k, v) => FULL ? Shell.call("setDoc", k, v).then(() => { docCache[k] = v; }) : new Promise((res, rej) => { const st = settings(); if (!st) return res(); try { st.set(k, v); st.saveAsync(r => r && r.status === "failed" ? rej(new Error((r.error && r.error.message) || "Couldn't save the add-in settings.")) : res()); } catch (e) { rej(e); } });
   const ls = { get: k => { try { return localStorage.getItem(k) || ""; } catch (e) { return ""; } }, set: (k, v) => { try { localStorage.setItem(k, v); } catch (e) { /* this session only */ } } };
   const dayIso = () => CP.serialToISO(todaySerial());
   function workbookKey() {
@@ -28,6 +49,7 @@
   const whoRead = () => CP.whoRec(whoKey() ? ls.get(whoKey()) : "");
   /* today's pick on this computer, if they're still on the workbook's list */
   function loadWho() {
+    if (FULL) { S.users = CP.userList(getDoc(USERS)); return; }   // full screen takes the pane's pick
     S.wb = S.wb || workbookKey(); S.users = CP.userList(getDoc(USERS));
     const n = CP.whoToday(whoRead(), dayIso()), u = n && S.users.find(x => CP.userKey(x.name) === CP.userKey(n));
     S.name = u ? u.name : "";
@@ -35,6 +57,7 @@
   function setWho(name) {
     S.name = name || ""; S.picking = false;
     if (whoKey()) ls.set(whoKey(), JSON.stringify(CP.whoPick(whoRead(), S.name, dayIso())));
+    if (FULL) Shell.call("setWho", S.name).catch(e => toast(String(e.message || e))); else Shell.update();
   }
   /* "Enter your name": this workbook's list only, people who've used this computer here first, nobody picked */
   function pickHTML() {
@@ -66,11 +89,11 @@
   }
 
   /* ---- the loading screen on open: each step ticks as its read finishes ---- */
-  const BOOT = ["Connecting to the workbook", "Reading the PTO tab and Dashboard", "Reading the coverage weeks", "Reading this week"];
+  const BOOT = FULL ? ["Getting the workbook from the task pane"] : ["Connecting to the workbook", "Reading the PTO tab and Dashboard", "Reading the coverage weeks", "Reading this week"];
   function bootStep(i, o) {
     const B = S.boot || (S.boot = { i: 0, m: [] });
     B.m[i] = i === 0 ? "Connected" : i === 1 ? `${o.sections.length} call pool${o.sections.length === 1 ? "" : "s"}, ${CP.providers(o.sections).length} providers` : i === 2 ? `${o.weeks.length} coverage week${o.weeks.length === 1 ? "" : "s"}` : o.text || "";
-    B.i = i + 1; if (!S.model) render();
+    B.i = Math.min(i + 1, BOOT.length); if (!S.model) render();
   }
   function bootHTML() {
     const B = S.boot || { i: 0, m: [] };
@@ -132,14 +155,14 @@
     const first = !S.model;
     if (first) { S.boot = { i: 0, m: [] }; render(); }
     try {
-      const m = await XL.readModel(first ? bootStep : null);
+      const m = await X.readModel(first ? bootStep : null);
       if (!keepWeek || S.weekIdx < 0) {
         let i = m.dash ? m.weeks.findIndex(w => w.label === m.dash.week) : -1;
         if (i < 0) { const w = CP.weekForSerial(m.weeks, todaySerial()); i = w ? m.weeks.indexOf(w) : 0; }
         S.weekIdx = i;
       }
       const w = m.weeks[S.weekIdx];
-      S.weekRows = w ? await XL.readWeek(m, satOf(w)) : null;
+      S.weekRows = w ? await X.readWeek(m, satOf(w)) : null;
       if (first) bootStep(3, { text: w ? w.label : "No coverage week" });
       S.model = m;
       loadWho();
@@ -147,7 +170,7 @@
     render();
   }
   async function loadWeek() {
-    const w = weekOf(S.weekIdx); S.weekRows = w ? await XL.readWeek(S.model, satOf(w)) : null;
+    const w = weekOf(S.weekIdx); S.weekRows = w ? await X.readWeek(S.model, satOf(w)) : null;
   }
   function weekData() {
     const m = S.model, w = weekOf(S.weekIdx); if (!w || !S.weekRows) return null;
@@ -168,18 +191,26 @@
   /* ---- views ---- */
   function render() {
     const app = $("#app");
-    if (S.error && !S.model) { app.innerHTML = `${frame()}<main><div class="msg bad">${esc(S.error)}</div><div class="act" style="margin-top:12px"><button class="btn" data-a="reload">Try again</button></div></main>`; return; }
+    if (S.error && !S.model) { app.innerHTML = frame(`<div class="msg bad">${esc(S.error)}</div><div class="act" style="margin-top:12px"><button class="btn" data-a="reload">Try again</button></div>`); return; }
     if (!S.model) { app.innerHTML = bootHTML(); return; }
     if (!S.name || S.picking) { app.innerHTML = pickHTML(); const f = $("#whoNew"); if (f && !S.users.length) f.focus(); return; }
     const body = S.view === "log" ? viewLog() : S.view === "setup" ? viewSetup() : viewWeek();
-    app.innerHTML = frame() + `<main class="stack">${S.error ? `<div class="msg bad">${esc(S.error)}</div>` : ""}${body}</main>`;
+    app.innerHTML = frame(`${S.error ? `<div class="msg bad">${esc(S.error)}</div>` : ""}${body}`);
     if (S.view === "log") bindLog();
   }
-  function frame() {
+  /* the toolbar (refresh, full screen, light / dark: shell.js) right of the name. Full screen: the rail holds the name, the
+     Dev Update bell's home right of it and the three tabs; the page's title line holds the toolbar. */
+  const TABS = [["week", "This week"], ["log", "Log time off"], ["setup", "Setup"]];
+  function frame(body) {
     const tab = (v, t) => `<button data-view="${v}" ${S.view === v ? 'aria-current="page"' : ""}>${t}</button>`;
-    /* no toolbar: no refresh, full screen or light/dark here, and the Dev Update bell floats (dev-updates.js), bottom right */
-    return `<header class="top"><div class="brand"><span>Call Pool PTO</span><small>${S.model && S.model.dash && S.model.dash.week ? "Dashboard week " + esc(S.model.dash.week) : ""}</small></div>
-      ${S.name ? `<div class="whoami"><span>${esc(S.name)}</span><button class="linkb" data-a="switchUser">Switch user</button></div>` : ""}<nav class="tabs">${tab("week", "This week")}${tab("log", "Log time off")}${tab("setup", "Setup")}</nav></header>`;
+    const dw = S.model && S.model.dash && S.model.dash.week ? `<small class="dw">Dashboard week ${esc(S.model.dash.week)}</small>` : "";
+    const who = S.name ? `<div class="whoami"><span>${esc(S.name)}</span><button class="linkb" data-a="switchUser">Switch user</button>${dw}</div>` : dw ? `<div class="whoami">${dw}</div>` : "";
+    const tools = Shell.tools();
+    if (!FULL) return `<header class="top"><div class="brand"><span>Call Pool PTO</span>${tools}</div>${who}<nav class="tabs">${TABS.map(([v, t]) => tab(v, t)).join("")}</nav></header><main class="stack">${body}</main>`;
+    const item = ([v, t]) => `<button type="button" class="item" data-view="${v}"${S.view === v ? ' aria-current="page"' : ""}>${t}</button>`;
+    const title = (TABS.find(t => t[0] === S.view) || TABS[0])[1];
+    return `<div class="fsframe">${Shell.rail({ name: "Call Pool PTO", sub: "Provider time off", nav: S.model ? TABS.map(item).join("") : "", busy: S.busy ? "Saving…" : "" })}
+      <div class="page"><header class="top"><div class="brand"><h1>${title}</h1>${tools}</div>${who}</header><main class="stack">${body}</main></div></div>`;
   }
 
   function viewWeek() {
@@ -188,7 +219,7 @@
     const opts = m.weeks.map((x, i) => `<option value="${i}" ${i === S.weekIdx ? "selected" : ""}>${esc(x.label)}</option>`).join("");
     const isDash = m.dash && w && w.label === m.dash.week;
     const data = weekData();
-    let html = `<div><div class="weekbar"><button class="arrow" data-a="prev" aria-label="Previous week" ${S.weekIdx <= 0 ? "disabled" : ""}>‹</button>
+    let html = `<div class="weekwrap"><div class="weekbar"><button class="arrow" data-a="prev" aria-label="Previous week" ${S.weekIdx <= 0 ? "disabled" : ""}>‹</button>
       <select id="wk" aria-label="Coverage week">${opts}</select>
       <button class="arrow" data-a="next" aria-label="Next week" ${S.weekIdx >= m.weeks.length - 1 ? "disabled" : ""}>›</button></div>
       <div class="weeksub">${w ? esc(weekText(w)) : ""}${isDash ? '<span class="tag">Dashboard week</span>' : ""}</div></div>`;
@@ -251,7 +282,7 @@
     if (to < from) { S.preview = { error: "“To” is before “From”." }; return render(); }
     if (to - from > 366) { S.preview = { error: "Pick a range of a year or less." }; return render(); }
     try {
-      const cells = await XL.readRow(S.model, +f.row, from, to);
+      const cells = await X.readRow(S.model, +f.row, from, to);
       if (seq !== previewSeq) return;
       const plan = CP.planWrite(cells, f.type, { weekdaysOnly: f.weekdays }), p = provByRow(f.row);
       plan.onCall = f.type === "clear" ? [] : CP.onCallWeeks(p.name, p.num, from, to, S.model.weeks, S.model.assign);
@@ -262,13 +293,13 @@
   async function loadRuns() {
     const row = +S.form.row; if (!row) return;
     const from = Math.max(todaySerial(), S.model.minDate), to = Math.min(from + 182, S.model.maxDate);
-    try { const cells = await XL.readRow(S.model, row, from, to); if (+S.form.row === row) { S.runs = CP.timeOffRuns(cells); render(); } }
+    try { const cells = await X.readRow(S.model, row, from, to); if (+S.form.row === row) { S.runs = CP.timeOffRuns(cells); render(); } }
     catch (e) { S.runs = []; render(); }
   }
   async function writePlan(row, from, values, doneText) {
     S.busy = true; render();
     try {
-      const r = await guarded(pw => XL.writeRow(S.model, row, from, values, pw));
+      const r = await guarded(pw => X.writeRow(S.model, row, from, values, pw));
       if (r.ok) { toast(doneText + " · " + time12(new Date())); await loadWeek(); }
       return r.ok;
     } catch (e) { S.error = e.message || String(e); return false; }
@@ -282,7 +313,7 @@
   }
   async function clearRun(start, end) {
     const prov = provByRow(S.form.row);
-    const cells = await XL.readRow(S.model, prov.row, start, end), plan = CP.planWrite(cells, "clear", {});
+    const cells = await X.readRow(S.model, prov.row, start, end), plan = CP.planWrite(cells, "clear", {});
     if (!plan.changes.length) return;
     if (await writePlan(prov.row, start, plan.values, `Cleared ${plan.changes.length} day${plan.changes.length > 1 ? "s" : ""} for ${prov.name}`)) { await loadRuns(); await refreshPreview(); } else render();
   }
@@ -325,12 +356,12 @@
     if (m.dash) {
       const typed = m.dash.rows.filter(r => r.covering && !r.formula.startsWith("="));
       if (typed.length) {
-        try { const st = Office.context.document.settings; st.set("cpCoveringBackup", { at: new Date().toISOString(), by: S.name, week: m.dash.week, cells: typed.map(r => ({ cell: "D" + r.row, text: r.covering })) }); await new Promise(res => st.saveAsync(res)); } catch (e) { /* settings unavailable: carry on */ }
+        try { await setDoc("cpCoveringBackup", { at: new Date().toISOString(), by: S.name, week: m.dash.week, cells: typed.map(r => ({ cell: "D" + r.row, text: r.covering })) }); } catch (e) { /* settings unavailable: carry on */ }
       }
     }
     S.busy = true;
     try {
-      const r = await guarded(pw => XL.install(m, pw));
+      const r = await guarded(pw => X.install(m, pw));
       if (r.ok) { toast("Formulas installed. Covering is live · " + time12(new Date())); await load(true); return; }
     } catch (e) { S.error = "Couldn't install the formulas: " + (e.message || e); }
     finally { S.busy = false; }
@@ -351,9 +382,9 @@
     if (act === "prev" || act === "next") { S.weekIdx += act === "prev" ? -1 : 1; await loadWeek(); render(); }
     else if (act === "install") install();
     else if (act === "reload") { S.model = null; render(); load(true); }
-    else if (act === "fit") { const r = await guarded(pw => XL.refreshDashboard(pw)); if (r.ok) toast("Dashboard rows resized"); }
-    else if (act === "gotoDash") XL.goTo(XL.DASH, "D7");
-    else if (act === "gotoPto") XL.goTo(XL.PTO, "B1");
+    else if (act === "fit") { const r = await guarded(pw => X.refreshDashboard(pw)); if (r.ok) toast("Dashboard rows resized"); }
+    else if (act === "gotoDash") X.goTo(X.DASH, "D7");
+    else if (act === "gotoPto") X.goTo(X.PTO, "B1");
     else if (act === "copy") copyText(a.dataset.f);
     else if (act === "clearRun") clearRun(+a.dataset.s, +a.dataset.e);
     else if (act === "pickUser") pickUser(a.dataset.v);
@@ -368,5 +399,28 @@
   window.reset = () => { S.view = "week"; S.form = { row: "", type: "pto", from: "", to: "", weekdays: true }; S.preview = null; S.runs = null; S.pw = null; S.remember = false; };
   window.show = v => { S.view = v; render(); };
   window.reload = () => load(false);
-  Office.onReady(() => { if (window.DevUpdates) DevUpdates.init({ app: "callpool" }); load(false); });
+  /* what full screen may ask the pane to do, with the pane's own model */
+  const PANE = {
+    readModel: async () => { await load(true); if (!S.model) throw new Error(S.error || "Couldn't read the workbook."); return ser(S.model); },
+    readWeek: sat => X.readWeek(S.model, sat),
+    readRow: (row, from, to) => X.readRow(S.model, row, from, to),
+    writeRow: async (row, from, values, pw) => { await X.writeRow(S.model, row, from, values, pw); await loadWeek(); render(); return true; },
+    install: async pw => { await X.install(S.model, pw); return true; },
+    refreshDashboard: async pw => { await X.refreshDashboard(pw); return true; },
+    goTo: (sheet, address) => X.goTo(sheet, address),
+    setDoc: async (k, v) => { await setDoc(k, v); if (k === USERS) { S.users = CP.userList(v); render(); } return true; },
+    setWho: async name => { setWho(name); render(); return true; }
+  };
+  const snap = () => ({ users: getDoc(USERS), name: S.name, wb: S.wb });
+  function fromPane(m) {
+    if (m.k !== "snap") return;
+    docCache[USERS] = m.users; S.wb = m.wb; S.users = CP.userList(m.users);
+    if (!S.picking) S.name = m.name || "";
+    if (!S.started) { S.started = true; load(false); } else render();
+  }
+  Office.onReady(() => {
+    Shell.init({ bell: "callpool", render: () => render(), refresh: () => load(true), toast, calls: PANE, snap, receive: fromPane });
+    if (FULL) { S.boot = { i: 0, m: [] }; render(); return; }   // waits for the pane's snap
+    load(false);
+  });
 })();

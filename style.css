@@ -1,4 +1,5 @@
-/* Call Pool PTO: MHS add-in design tokens (same palette and type as the IVK / ESK / TMS trackers). Light by default, dark follows the system. */
+/* Call Pool PTO: MHS add-in design tokens (same palette and type as the IVK / ESK / TMS trackers). The toolbar's light / dark
+   picks the theme (html[data-theme], shell.js); until someone picks, it follows the computer's setting, as before. */
 @font-face{font-family:"IBM Plex Sans";font-style:normal;font-weight:400;font-display:swap;src:url(assets/fonts/ibm-plex-sans-latin-400-normal.woff2) format("woff2")}
 @font-face{font-family:"IBM Plex Sans";font-style:normal;font-weight:500;font-display:swap;src:url(assets/fonts/ibm-plex-sans-latin-500-normal.woff2) format("woff2")}
 @font-face{font-family:"IBM Plex Sans";font-style:normal;font-weight:600;font-display:swap;src:url(assets/fonts/ibm-plex-sans-latin-600-normal.woff2) format("woff2")}
@@ -13,7 +14,7 @@
   --shadow:0 1px 2px rgba(16,24,20,.05),0 12px 32px -14px rgba(16,24,20,.14);
   --font:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
 }
-@media (prefers-color-scheme:dark){:root{color-scheme:dark;--bg:#131716;--surface:#1B2220;--surface-2:#252D2A;--surface-3:#182019;--ink:#ECEFED;--muted:#9BA59F;--faint:#5C6763;--accent:#6DC4A6;--accent-ink:#0E2A22;--accent-soft:#1D3A31;--warn:#E9B150;--warn-soft:#3A2D13;--danger:#F19189;--danger-ink:#3A0F0C;--danger-soft:#43211E;--pto:#FFB3C3;--pto-soft:#4A1E28;--leave:#8EE8C2;--leave-soft:#163D2E;--call:#FFB0A8;--call-soft:#4A1F1B;--shadow:0 0 0 1px rgba(255,255,255,.05),0 12px 32px -14px rgba(0,0,0,.6)}}
+:root[data-theme="dark"]{color-scheme:dark;--bg:#131716;--surface:#1B2220;--surface-2:#252D2A;--surface-3:#182019;--ink:#ECEFED;--muted:#9BA59F;--faint:#5C6763;--accent:#6DC4A6;--accent-ink:#0E2A22;--accent-soft:#1D3A31;--warn:#E9B150;--warn-soft:#3A2D13;--danger:#F19189;--danger-ink:#3A0F0C;--danger-soft:#43211E;--pto:#FFB3C3;--pto-soft:#4A1E28;--leave:#8EE8C2;--leave-soft:#163D2E;--call:#FFB0A8;--call-soft:#4A1F1B;--shadow:0 0 0 1px rgba(255,255,255,.05),0 12px 32px -14px rgba(0,0,0,.6)}
 
 *{box-sizing:border-box}
 html,body{margin:0;min-height:100%;background:var(--bg);color:var(--ink)}
@@ -28,15 +29,22 @@ button:disabled{cursor:default;opacity:.5}
 
 /* frame */
 header.top{position:sticky;top:0;z-index:2;background:var(--surface);box-shadow:var(--shadow);padding:14px 16px 0}
+/* full screen (shell.css draws the rail with the tabs): the title line holds the toolbar; pools sit in columns */
+.fsframe header.top{position:static;background:none;box-shadow:none;padding:0;margin-bottom:18px}
+.fsframe .brand{margin:0}
+.fsframe .brand h1{margin:0;font-size:28px;font-weight:600;letter-spacing:-.02em;line-height:40px}
+.fsframe main{padding:0}
+.fsframe main.stack{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:14px;align-items:start}
+.fsframe main.stack>*+*{margin-top:0}
+.fsframe main.stack>:not(.pool){grid-column:1/-1}
+.fsframe main.stack>.card:not(.pool),.fsframe main.stack>.weekwrap{max-width:720px}
+.fsframe .toast{left:auto;right:24px;width:min(420px,calc(100% - 48px))}
 .whoami{display:flex;align-items:baseline;gap:8px;margin-top:2px;font-size:12.5px;color:var(--muted)}
 .whoami span{font-weight:600;color:var(--ink)}
 .linkb{color:var(--accent);font-weight:500;text-decoration:underline;text-underline-offset:2px;min-height:24px}
-.brand{font-weight:600;font-size:16px;display:flex;justify-content:space-between;align-items:baseline;gap:8px}
-.brand small{font-weight:400;font-size:12px;color:var(--muted);margin-left:auto}
-.brand{align-items:center}
-.devupd.du-docked .du-bell{width:36px;height:36px;border-radius:10px}
-.devupd.du-docked .du-dot{top:7px;right:8px}
-.devupd.du-docked .du-card,.devupd.du-docked .du-panel{top:42px}
+/* the name, then the toolbar flush right (refresh, full screen, light / dark) */
+.brand{font-weight:600;font-size:16px;display:flex;justify-content:space-between;align-items:center;gap:8px;margin:-8px -8px 0 0}
+.whoami .dw{margin-left:auto;font-size:12px}
 nav.tabs{display:flex;gap:4px;margin-top:10px}
 nav.tabs button{padding:9px 12px 10px;border-bottom:2px solid transparent;color:var(--muted);font-weight:500}
 nav.tabs button[aria-current="page"]{color:var(--accent);border-bottom-color:var(--accent);font-weight:600}
@@ -76,8 +84,8 @@ select,input[type=date],input[type=password],input[type=text]{width:100%;min-hei
 .pool li{display:grid;grid-template-columns:1fr auto;gap:2px 8px;padding:7px 0;border-top:1px solid var(--surface-2)}
 .pool li .nm{font-weight:500}
 .pool li .dt{grid-column:1/-1;font-size:12.5px;color:var(--muted)}
-.pool .none{margin:8px 0 0;font-size:13px;color:var(--faint)}
-.count{min-width:22px;height:22px;padding:0 7px;border-radius:11px;background:var(--surface-2);color:var(--muted);font-size:12px;font-weight:600;display:inline-grid;place-items:center}
+.pool .none{margin:8px 0 0;font-size:13px;color:var(--muted)}
+.count{min-width:22px;height:22px;padding:0 7px;border-radius:11px;background:var(--surface-2);color:var(--ink);font-size:12px;font-weight:600;display:inline-grid;place-items:center}
 .conflict{margin-top:10px;padding:8px 10px;border-radius:10px;background:var(--danger-soft);font-size:13px}
 .conflict b{color:var(--danger)}
 .chips{display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end}
