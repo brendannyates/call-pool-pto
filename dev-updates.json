@@ -1,0 +1,13 @@
+{
+  "updates": [
+    {
+      "id": "2026-11-07-name-screen-bell",
+      "date": "2026-11-07",
+      "bullets": [
+        "New: The first time you open Call Pool PTO each day, it asks for your name. Pick yours, or add it if you're new. To change it, use Switch user at the top.",
+        "New: While the workbook is read, a loading screen shows each step.",
+        "New: This bell, at the right end of the header, shows what changed in the add-in."
+      ]
+    }
+  ]
+}

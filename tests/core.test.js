@@ -102,6 +102,32 @@ test("formulas: row numbers, date row, signatures", () => {
   for (const x of [CP.FORMULAS.pto(6), CP.FORMULAS.leave(6), CP.FORMULAS.covering(7)]) assert.equal((x.match(/\(/g) || []).length, (x.match(/\)/g) || []).length);
 });
 
+test("people list: clean, dedupe, add, remove", () => {
+  assert.deepEqual(CP.userList([{ name: "  Avery  " }, { name: "avery" }, "Jordan", null, { name: "" }]).map(u => u.name), ["Avery", "Jordan"]);
+  assert.deepEqual(CP.userList("not a list"), []);
+  assert.equal(CP.cleanName("  Sam   R  "), "Sam R");
+  assert.equal(CP.cleanName("x".repeat(40)).length, 30);
+  const L = CP.addUser([{ name: "Avery" }], "Jordan", "2026-11-07");
+  assert.deepEqual(L, [{ name: "Avery", added: "" }, { name: "Jordan", added: "2026-11-07" }]);
+  assert.equal(CP.addUser(L, "JORDAN").length, 2);
+  assert.deepEqual(CP.removeUser(L, "avery").map(u => u.name), ["Jordan"]);
+});
+
+test("today's pick and picker order", () => {
+  const rec = CP.whoRec(JSON.stringify(CP.whoPick(CP.whoRec(""), "Sam", "2026-11-07")));
+  assert.equal(CP.whoToday(rec, "2026-11-07"), "Sam");
+  assert.equal(CP.whoToday(rec, "2026-11-08"), "");
+  assert.deepEqual(CP.whoRec("{bad json").used, []);
+  const r2 = CP.whoPick(CP.whoPick(rec, "Ana", "2026-11-08"), "sam", "2026-11-09");
+  assert.deepEqual(r2.used, ["sam", "Ana"]);
+  const order = CP.pickOrder([{ name: "Zoe" }, { name: "Ana" }, { name: "Sam" }, { name: "beth" }], ["Sam"]);
+  assert.deepEqual(order.map(u => u.name), ["Sam", "Ana", "beth", "Zoe"]);
+  assert.deepEqual(order.map(u => u.here), [true, false, false, false]);
+  assert.equal(CP.wbKeyOf("https://x/Call Pool.xlsx?web=1"), CP.wbKeyOf("HTTPS://X/call pool.xlsx"));
+  assert.notEqual(CP.wbKeyOf("a.xlsx"), CP.wbKeyOf("b.xlsx"));
+  assert.equal(CP.wbKeyOf(""), "");
+});
+
 test("rowHeightFor", () => {
   assert.equal(CP.rowHeightFor("", 50, 39.75), 39.75);
   assert.equal(CP.rowHeightFor("x".repeat(160), 50, 39.75), 72);
