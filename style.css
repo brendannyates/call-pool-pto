@@ -34,7 +34,6 @@ header.top{position:sticky;top:0;z-index:2;background:var(--surface);box-shadow:
 .brand{font-weight:600;font-size:16px;display:flex;justify-content:space-between;align-items:baseline;gap:8px}
 .brand small{font-weight:400;font-size:12px;color:var(--muted);margin-left:auto}
 .brand{align-items:center}
-.tools{display:flex;align-items:center;margin:-8px -8px -8px 0}
 .devupd.du-docked .du-bell{width:36px;height:36px;border-radius:10px}
 .devupd.du-docked .du-dot{top:7px;right:8px}
 .devupd.du-docked .du-card,.devupd.du-docked .du-panel{top:42px}

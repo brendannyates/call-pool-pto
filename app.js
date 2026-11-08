@@ -177,8 +177,8 @@
   }
   function frame() {
     const tab = (v, t) => `<button data-view="${v}" ${S.view === v ? 'aria-current="page"' : ""}>${t}</button>`;
-    /* toolbar, flush right: no refresh, full screen or light/dark here, so it holds only the Dev Update bell (.du-slot) */
-    return `<header class="top"><div class="brand"><span>Call Pool PTO</span><small>${S.model && S.model.dash && S.model.dash.week ? "Dashboard week " + esc(S.model.dash.week) : ""}</small><div class="tools"><span class="du-slot"></span></div></div>
+    /* no toolbar: no refresh, full screen or light/dark here, and the Dev Update bell floats (dev-updates.js), bottom right */
+    return `<header class="top"><div class="brand"><span>Call Pool PTO</span><small>${S.model && S.model.dash && S.model.dash.week ? "Dashboard week " + esc(S.model.dash.week) : ""}</small></div>
       ${S.name ? `<div class="whoami"><span>${esc(S.name)}</span><button class="linkb" data-a="switchUser">Switch user</button></div>` : ""}<nav class="tabs">${tab("week", "This week")}${tab("log", "Log time off")}${tab("setup", "Setup")}</nav></header>`;
   }
 
