@@ -1,6 +1,16 @@
 {
   "updates": [
     {
+      "id": "2026-11-08-bell-home",
+      "date": "2026-11-08",
+      "bullets": [
+        "New: Full screen. Press the corners button at the top right. The tabs sit in a bar on the left and the call pools spread across the page. Keep the side pane open: full screen saves through it.",
+        "New: Refresh and light/dark at the top right. Light/dark is remembered on this computer; until you pick, it follows your computer's setting.",
+        "Changed: The Dashboard week now shows on the line with your name.",
+        "Changed: The Dev updates bell is only in full screen, right of the name at the top left. A red dot means something new; click the bell to read it. Nothing pops up on its own."
+      ]
+    },
+    {
       "id": "2026-11-08-bell-float",
       "date": "2026-11-08",
       "bullets": [

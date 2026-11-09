@@ -14,15 +14,19 @@ The hosted files hold no PHI and no provider data. Everything is read from and w
   - Typed Covering notes it replaces are copied into the workbook's add-in settings (`cpCoveringBackup`).
   - Safe to run again.
 
-## Name screen and Dev Update bell
+## Name screen, toolbar, full screen and Dev Update bell
 
 On open, a loading screen ticks off each read. Then, if nobody has picked a name on this computer today, the pane asks "Enter your name". The list of names is kept in the workbook's add-in settings (`cpUsers`), so no sheet is added; today's pick is kept in this computer's browser storage, per workbook. **Switch user** at the top changes it; Setup lists the names and can remove one.
 
-The bell at the right end of the header (`dev-updates.js`, `.css`, `.json`, shared with the IVK Tracker) shows what changed. Add an entry to the top of `dev-updates.json` with each release. On the loading and name screens, which have no toolbar, it floats top right and can be dragged.
+Top right: refresh (reads the workbook again), full screen and light/dark (`shell.js`, `shell.css`, the same files as Confirmations and Kinnect Relay; keep them identical). Light/dark is remembered on this computer; until someone picks, it follows the computer's setting.
+
+Full screen floats over the Excel page (an in-page dialog, not a new window), with the three tabs in a rail on the left and the pools in columns. It never touches the workbook itself: every read and save goes through the pane, so keep the pane open. **Open Dashboard** and **Open PTO tab** go there and close full screen.
+
+The Dev Update bell (`dev-updates.js`, `.css`, `.json`, shared with the IVK Tracker) lives only in full screen, right of the name at the top left. A red dot means something new; a click opens the history. Nothing pops up on its own. Add an entry to the top of `dev-updates.json` with each release.
 
 ## Protected sheets
 
-The PTO and Dashboard sheets are password-protected. When a save needs them, the pane asks for the sheet password, unprotects, writes, then protects again with the same options. The password is kept only in memory: for one save, or until the pane closes if you tick *Remember*. It is never stored or sent.
+The PTO and Dashboard sheets are password-protected. When a save needs them, the pane asks for the sheet password, unprotects, writes, then protects again with the same options. The password is kept only in memory: for one save, or until the pane closes if you tick *Remember*. It is never stored or sent. In full screen the prompt is full screen's own; the password goes to the pane with that one save, in memory, and *Remember* lasts until full screen closes. It is never put in the dialog's address or in browser storage.
 
 ## Formulas
 
@@ -30,7 +34,7 @@ The PTO and Dashboard sheets are password-protected. When a save needs them, the
 
 ## Files
 
-`core.js` rules (node tests in `tests/`), `excel.js` workbook I/O, `app.js` pane UI, `style.css` MHS add-in tokens, `manifest.xml` (ExcelApi 1.13).
+`core.js` rules (node tests in `tests/`), `excel.js` workbook I/O, `app.js` pane UI, `style.css` MHS add-in tokens, `shell.js` / `shell.css` toolbar, light/dark and full screen, `manifest.xml` (ExcelApi 1.13).
 
 ```
 npm run check
